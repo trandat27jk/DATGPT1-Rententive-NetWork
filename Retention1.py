@@ -3,6 +3,7 @@ import math
 import os
 import time
 
+import numpy as np
 import tiktoken
 import torch
 import torch._dynamo
@@ -13,8 +14,57 @@ import torch.optim as optim
 from torch.distributed import destroy_process_group, init_process_group
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-from dataloader import DataLoaderLite
 from RMSNorm import RMSNorm
+
+
+def load_tokens(filename):
+    npt = np.load(filename)
+    npt = npt.astype(np.int32)
+    ptt = torch.tensor(npt, dtype=torch.long)
+
+    return ptt
+
+
+class DataLoaderLite:
+    def __init__(self, B, T, process_rank, num_processes, split):
+        self.B = B
+        self.T = T
+        self.process_rank = process_rank
+        self.num_processes = num_processes
+        assert split in {"train", "val"}
+
+        # get the shard filenames
+        data_root = "edu_fineweb10B"
+        shards = os.listdir(data_root)
+        shards = [s for s in shards if split in s]
+        shards = sorted(shards)
+        shards = [os.path.join(data_root, s) for s in shards]
+        self.shards = shards
+        assert len(shards) > 0, f"no shards found for split {split}"
+        if master_process:
+            print(f"found {len(shards)} shards for split {split}")
+        self.reset()
+
+    def reset(self):
+        # state, init at shard zero
+        self.current_shard = 0
+        self.tokens = load_tokens(self.shards[self.current_shard])
+        self.current_position = self.B * self.T * self.process_rank
+
+    def next_batch(self):
+        B, T = self.B, self.T
+        buf = self.tokens[self.current_position : self.current_position + B * T + 1]
+        x = (buf[:-1]).view(B, T)  # inputs
+        y = (buf[1:]).view(B, T)  # targets
+        # advance the position in the tensor
+        self.current_position += B * T * self.num_processes
+        # if loading the next batch would be out of bounds, advance to next shard
+        if self.current_position + (B * T * self.num_processes + 1) > len(self.tokens):
+            self.current_shard = (self.current_shard + 1) % len(self.shards)
+            self.tokens = load_tokens(self.shards[self.current_shard])
+            self.current_position = B * T * self.process_rank
+        return x, y
+
 
 torch._dynamo.config.suppress_errors = True
 
@@ -43,10 +93,12 @@ else:
     print(f"using deivce: {device}")
 
 
-total_batch_size = 409600
+total_batch_size = 4096000
 B = 16
 T = 64
-dataloader = DataLoaderLite(B, T, "input.txt")
+# dataloader = DataLoaderLite(
+#     B, T, process_rank=ddp_rank, num_process=ddp_world_size
+# )
 assert total_batch_size % (B * T * ddp_world_size) == 0
 grad_accum_steps = int(total_batch_size // (B * T * ddp_world_size))
 if master_process:
@@ -56,12 +108,13 @@ print("I am gpu", ddp_rank)
 
 
 class RetnetConfig:
-    block_size: int = 1024
+    block_size: int = 2048
     vocab_size: int = 50304
     n_layers: int = 12
-    n_heads: int = 8
-    n_embd: int = 256
-    valuebd: int = 512
+    n_heads: int = 12
+    n_embd: int = 768
+    valuebd: int = 768
+    max_size: int = 2048
 
 
 update_recurrent = {}
@@ -70,9 +123,9 @@ update_recurrent = {}
 class FeedForward(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.ln1 = nn.Linear(config.n_embd, 2 * config.n_embd)
+        self.ln1 = nn.Linear(config.n_embd, 4 * config.n_embd)
         self.gelu = nn.GELU()
-        self.proj = nn.Linear(2 * config.n_embd, config.n_embd)
+        self.proj = nn.Linear(4 * config.n_embd, config.n_embd)
 
     def forward(self, x):
         x = self.ln1(x)
@@ -317,11 +370,19 @@ class RetNet(nn.Module):
         return optimizer
 
 
+enc = tiktoken.get_encoding("gpt2")
 max_lr = 6e-4
 min_lr = max_lr * 0.1
-warmup_steps = 275
+warmup_steps = 375
 max_steps = 25000
 device_type = "cuda" if device.startswith("cuda") else "cpu"
+max_length = RetnetConfig.max_size
+train_loader = DataLoaderLite(
+    B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="train"
+)
+val_loader = DataLoaderLite(
+    B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="val"
+)
 
 
 def get_lr(it):
@@ -337,7 +398,7 @@ def get_lr(it):
 
 torch.set_float32_matmul_precision("high")
 model = RetNet(config=RetnetConfig).to(device)
-model = torch.compile(model)
+# model = torch.compile(model)
 if ddp:
     model = DDP(model, device_ids=[ddp_local_rank])
 raw_model = model.module if ddp else model
@@ -346,26 +407,70 @@ print(parameters)
 optimizer = raw_model.configure_optimizers(
     weight_decay=0.05, learning_rate=6e-4, betas=(0.9, 0.98), device_type=device
 )
-for i in range(1000):
+
+for step in range(max_steps):
     t0 = time.time()
+    val_loader.reset()
+    with torch.no_grad():
+        val_loss_accum = 0.0
+        val_loss_steps = 20
+        for _ in range(val_loss_steps):
+            x, y = val_loader.next_batch()
+            x, y = x.to(device), y.to(device)
+            with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+                logits, loss = model(x, y)
+
+            loss = loss / val_loss_steps
+            val_loss_accum += loss.detach()
+
+        if ddp:
+            dist.all_reduce(val_loss_accum, op=dist.ReduceOp.AVG)
+        if master_process:
+            print(f"validation loss: {val_loss_accum.item():.4f}")
+
+    # Generate sample
+    if step > 0 and step % 100 == 0:
+        model.eval()
+        num_return_sequences = 4
+        max_length = 32
+        tokens = enc.encode("Hello, how are you")
+        tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1)
+        xgen = tokens.to(device)
+        sample_rng = torch.Generator(device=device)
+        sample_rng.manual_seed(42 + ddp_rank)
+        while xgen(1) < max_length:
+            with torch.no_grad():
+                logits = model(xgen, training_mode=False)
+                logits = logits[:, -1, :]
+                probs = F.softmax(logits, dim=-1)
+                probs, indices = torch.topk(probs, 50, -1)
+                ix = torch.multinomial(probs, 1, generator=sample_rng)
+                xcol = torch.gather(indices, -1, ix)
+                xgen = torch.cat((xgen, xcol), dim=1)
+                xgen = xgen[:, -1]
+
+        for i in range(num_return_sequences):
+            tokens = xgen[i, :max_length].tolist()
+            decoded = enc.decode(tokens)
+            print(f"{ddp_rank} sample {i} :{decoded}")
     optimizer.zero_grad()
     loss_accum = 0.0
     for micro_step in range(grad_accum_steps):
-        x, y = dataloader.next_batch()
+        x, y = train_loader.next_batch()
         x, y = x.to(device), y.to(device)
-
+        if ddp:
+            model.require_backward_grad_sync = micro_step == grad_accum_steps - 1
         with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
             logits, loss = model(x, target=y, training_mode=True)
         loss = loss / grad_accum_steps
         loss_accum += loss.detach()
-        if ddp:
-            model.require_backward_grad_sync = micro_step == grad_accum_steps - 1
+
         loss.backward()
 
     if ddp:
         dist.all_reduce(loss_accum, op=dist.ReduceOp.AVG)
     norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-    lr = get_lr(i)
+    lr = get_lr(step)
     for param_group in optimizer.param_groups:
         param_group["lr"] = lr
 
@@ -373,7 +478,7 @@ for i in range(1000):
     torch.cuda.synchronize()
     t1 = time.time()
     dt = (t1 - t0) * 1000
-    tokens_processsed = dataloader.B * dataloader.T * grad_accum_steps
+    tokens_processsed = train_loader.B * train_loader.T * grad_accum_steps
     tokens_per_sec = tokens_processsed / dt
     if master_process:
         print(
@@ -381,3 +486,18 @@ for i in range(1000):
         )
 if ddp:
     destroy_process_group()
+
+
+def generate(model, config, x):
+    while x.size(1) < config.max_size:
+        logits = model(x)
+        logits = logits[:, -1, :]
+        probs = torch.softmax(logits, dim=-1)
+        topk_probs, topk_indices = torch.topk(probs, 10, dim=-1)
+        ix = torch.multinomial(topk_probs, 1)
+        xcol = torch.gather(topk_indices, -1, ix)
+        x = torch.cat([x, xcol], dim=1)
+
+
+for i in range():
+    pass
