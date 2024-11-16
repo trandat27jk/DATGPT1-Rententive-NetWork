@@ -1,25 +1,35 @@
 This repository provides an implementation of the Retentive Network (RetNet), as proposed in the paper:
 "Retentive Network: A Successor to Transformer for Large Language Models".
 
-RetNet introduces an innovative architecture that combines the strengths of recurrent and attention mechanisms to efficiently handle long-context sequences, surpassing Transformers in scalability and memory efficiency. This repository includes:
+-RetNet introduces an innovative architecture that combines the strengths of recurrent and attention mechanisms to efficiently handle long-context sequences, surpassing Transformers in scalability and memory efficiency. This repository includes:
 
 A modular and extensible PyTorch implementation of RetNet.
 Tools for training on datasets like the Fineweb dataset.
 GPU-parallelized training for scalability.
 Features for handling long-context text generation with token dropping.
-Highlights
+
+
+-Highlights
 Efficient Long-Context Processing: Leverages retention mechanisms for better scalability with long input sequences.
 Transformer Successor: Implements advancements designed to address Transformers' limitations in memory and efficiency.
 Customizability: Easily adaptable to various datasets and tasks.
 Parallel GPU Training: Fully optimized for multi-GPU environments.
-Features
+
+-Features
 Retention Mechanism: RetNet retains contextual information with minimal computational overhead.
 Token Dropping: Includes functionality to selectively drop tokens during generation, enhancing efficiency without compromising performance.
 Advanced PyTorch Training Pipeline: Incorporates modern practices like mixed-precision training, gradient accumulation, and distributed training.
-Requirements
+
+
+-Requirements
+
 Python 3.8+
+
 PyTorch 2.0+
+
 CUDA-compatible GPUs for parallel training
+
+
 Install dependencies:
 
 ```
@@ -28,7 +38,7 @@ pip install -r requirements.txt
 Usage
 Training on Fineweb Dataset
 Prepare the Dataset
-Download and preprocess the Tiny Shakespeare dataset:
+Download and preprocess the Fineweb dataset:
 
 bash
 Sao chép mã
