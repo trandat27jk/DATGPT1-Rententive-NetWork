@@ -25,7 +25,7 @@ def tokenize(doc):
     tokens = [eot]
     tokens.extend(enc.encode_ordinary(doc["text"]))
     tokens_np = np.array(tokens)
-    assert (0 <= tokens_np).all()(tokens_np < 2**16).all()
+    assert (0 <= tokens_np).all() and (tokens_np < 2**16).all()
     tokens_np_unit16 = tokens_np.astype(np.uint16)
     return tokens_np_unit16
 
@@ -44,7 +44,7 @@ with mp.Pool(nprocs) as pool:
     for tokens in pool.imap(tokenize, fw, chunksize=16):
         if token_count + len(tokens) < shard_size:
             all_tokens_np[token_count : token_count + len(tokens)] = tokens
-            token_count += np.len(tokens)
+            token_count += len(tokens)
             if progress_bar is not None:
                 progress_bar = tqdm(
                     total=shard_size, uint="tokens", desc=f"shard{shard_index}"
