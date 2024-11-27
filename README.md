@@ -69,3 +69,7 @@ Future Work
 Experimenting with larger datasets and tasks (e.g., OpenWebText, C4).
 Incorporating advanced token dropping strategies.
 Extending support to other frameworks like JAX.
+<<<<<<< HEAD
+=======
+I want to pay attribute to https://github.com/karpathy/build-nanogpt
+>>>>>>> 744291303669b0acfcfc25244ae167835cdc3c1c
