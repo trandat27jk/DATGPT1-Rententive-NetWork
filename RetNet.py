@@ -1,8 +1,4 @@
-<<<<<<< HEAD
-aimport inspect
-=======
 import inspect
->>>>>>> 744291303669b0acfcfc25244ae167835cdc3c1c
 import math
 import os
 import time
@@ -15,7 +11,6 @@ import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-<<<<<<< HEAD
 from rotary_embedding_torch import RotaryEmbedding
 from torch.distributed import destroy_process_group, init_process_group
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -23,12 +18,6 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from RMSNorm import RMSNorm
 
 
-=======
-from torch.distributed import destroy_process_group, init_process_group
-from torch.nn.parallel import DistributedDataParallel as DDP
-from rotary_embedding_torch import RotaryEmbedding
-from RMSNorm import RMSNorm
->>>>>>> 744291303669b0acfcfc25244ae167835cdc3c1c
 class RetnetConfig:
     block_size: int = 1024
     vocab_size: int = 50304
@@ -37,11 +26,7 @@ class RetnetConfig:
     n_embd: int = 1024
     valuebd: int = 2048
     max_size: int = 2048
-<<<<<<< HEAD
     dropout: float = 0.1
-=======
-    dropout: float=0.1
->>>>>>> 744291303669b0acfcfc25244ae167835cdc3c1c
 
 
 update_recurrent = {}
@@ -53,21 +38,13 @@ class FeedForward(nn.Module):
         self.ln1 = nn.Linear(config.n_embd, 2 * config.n_embd)
         self.gelu = nn.GELU()
         self.proj = nn.Linear(2 * config.n_embd, config.n_embd)
-<<<<<<< HEAD
         self.dropout = nn.Dropout(config.dropout)
 
-=======
-        self.dropout=nn.Dropout(config.dropout)
->>>>>>> 744291303669b0acfcfc25244ae167835cdc3c1c
     def forward(self, x):
         x = self.ln1(x)
         x = self.gelu(x)
         x = self.proj(x)
-<<<<<<< HEAD
         x = self.dropout(x)
-=======
-        x=self.dropout(x)
->>>>>>> 744291303669b0acfcfc25244ae167835cdc3c1c
         return x
 
 
@@ -85,21 +62,12 @@ class Retention(nn.Module):
         self.to_qk = nn.Linear(config.n_embd, 2 * config.n_embd)
         self.to_v = nn.Linear(config.n_embd, self.valuebd)
         self.scaling = config.n_embd**-0.5
-<<<<<<< HEAD
         self.groupnorm = RMSNorm(self.value_dim)
         self.to_g = nn.Linear(self.n_embd, self.valuebd)
         self.to_logits = nn.Linear(self.valuebd, self.n_embd)
         self.rotary_embed = RotaryEmbedding(self.key_dim)
         self.attn_dropout = nn.Dropout(config.dropout)
         self.resid_dropout = nn.Dropout(config.dropout)
-=======
-        self.groupnorm = RMSNorm(self.value_dim, elementwise_affine=False)
-        self.to_g = nn.Linear(self.n_embd, self.valuebd)
-        self.to_logits = nn.Linear(self.valuebd, self.n_embd)
-        self.rotary_embed=RotaryEmbedding(self.key_dim)
-        self.attn_dropout=nn.Dropout(config.dropout)
-        self.resid_dropout=nn.Dropout(config.dropout)
->>>>>>> 744291303669b0acfcfc25244ae167835cdc3c1c
         self._init_weights()
 
     def _init_weights(self):
@@ -147,11 +115,7 @@ class Retention(nn.Module):
         qk_mask = qk * inner_decay
         inner_scale = qk_mask.detach().abs().sum(dim=-1, keepdim=True).clamp(min=1)
         qk_mask = qk_mask / inner_scale
-<<<<<<< HEAD
         qk_mask = self.attn_dropout(qk_mask)
-=======
-        qk_mask=self.attn_dropout(qk_mask)
->>>>>>> 744291303669b0acfcfc25244ae167835cdc3c1c
         inner_output = torch.matmul(qk_mask, v)
         kv = k.transpose(-1, -2) @ v
         kv = kv * value_decay
@@ -179,11 +143,7 @@ class Retention(nn.Module):
         align_inner_scale = all_scale / inner_scale
         align_cross_scale = all_scale / scale
 
-<<<<<<< HEAD
         cross_output = (q * query_decay) @ kv_recurrent
-=======
-        cross_output = (q * query_decay)@kv_recurrent
->>>>>>> 744291303669b0acfcfc25244ae167835cdc3c1c
         output = inner_output / align_inner_scale + kv_recurrent / align_cross_scale
         output = output.transpose(2, 3)
         return output
@@ -192,11 +152,7 @@ class Retention(nn.Module):
         B, T, C = x.size()
         qk = self.to_qk(x)
         q, k = qk.split(self.n_embd, dim=-1)
-<<<<<<< HEAD
         k = k * self.scaling
-=======
-        k=k*self.scaling
->>>>>>> 744291303669b0acfcfc25244ae167835cdc3c1c
         v = self.to_v(x)
         q = q.view(B, T, self.heads, self.key_dim).transpose(1, 2)
         k = k.view(B, T, self.heads, self.key_dim).transpose(1, 2)
@@ -271,11 +227,7 @@ class RetNet(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-<<<<<<< HEAD
         self.block_size = config.block_size
-=======
-        self.block_size=config.block_size
->>>>>>> 744291303669b0acfcfc25244ae167835cdc3c1c
         self.RetNet = nn.ModuleDict(
             dict(
                 wte=nn.Embedding(config.vocab_size, config.n_embd),
@@ -300,17 +252,10 @@ class RetNet(nn.Module):
             update_recurrent = {}
         for block in self.RetNet.RetNetBlock:
             x = block(x, use_chunkwise, update_recurrent)
-<<<<<<< HEAD
 
         x = self.RetNet.ln1(x)
         logits = self.lm_head(x)
         loss = None
-=======
-        
-        x = self.RetNet.ln1(x)
-        logits = self.lm_head(x)
-        loss=None
->>>>>>> 744291303669b0acfcfc25244ae167835cdc3c1c
         if target is not None:
             loss = F.cross_entropy(
                 logits.view(-1, logits.size(-1)), target.view(-1), ignore_index=-1
@@ -344,7 +289,6 @@ class RetNet(nn.Module):
         )
         print(f"using AdamW: {use_fused}")
         return optimizer
-<<<<<<< HEAD
 
     @torch.no_grad()
     def generate(self, txt, max_new_tokens, top_k=1, temperature=1):
@@ -361,18 +305,23 @@ class RetNet(nn.Module):
             idx_new = torch.multinomial(F.softmax(logits, dim=-1), num_samples=1)
             txt = torch.cat((txt, idx_new), dim=1)
         return txt
-=======
+    #topno
     @torch.no_grad()
-    def generate(self,txt,max_new_tokens,top_k=1,temperature=1):
+    def generate_topno(self,txt,max_new_tokens,tokenizer,temperature=1,n=1):
         for i in range(max_new_tokens):
-          ind_tokens=txt if txt.size(1)<self.block_size else txt[:,-self.block_size]
-          logits,loss=self(ind_tokens)
-          logits=logits[:,-1,:]/temperature
-          if top_k is not None:
-              v,_=torch.topk(logits,k=top_k)
-              logits[logits<v[:,[-1]]]=-float("Inf")
-          
-          idx_new=torch.multinomial(F.softmax(logits,dim=-1),num_samples=1)  
-          txt=torch.cat((txt,idx_new),dim=1)
+            ind_tokens = (
+                    txt if txt.size(1) < self.block_size else txt[:, -self.block_size]
+                )
+            logits,loss=self(ind_tokens)
+            logit=logits[:,-1,:]/temperature
+            M_values,_=torch.max(logit,dim=1)
+            std=torch.std(logit,dim=1)
+            threshold=M_values-n*std
+            mask=logit[0,:]<threshold
+            indices=torch.nonzero(mask).squeeze()
+            logit[0,indices]=-1e9
+            probs=F.softmax(logit,dim=-1)
+            indx=torch.multinomial(probs,num_samples=1)
+            txt=torch.cat((txt,indx),dim=1)
+            
         return txt
->>>>>>> 744291303669b0acfcfc25244ae167835cdc3c1c
